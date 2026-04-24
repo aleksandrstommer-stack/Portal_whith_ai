@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { ollamaChat } from "@/lib/rag/ollama";
 import { getRagPool } from "@/lib/rag/pool";
 import { ensureRagSchema } from "@/lib/rag/schema";
+import { getStrapiPublicBaseUrl, getStrapiServerRequestBaseUrl } from "@/lib/strapi-urls";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -65,15 +66,14 @@ type TestQuestion = {
   expected: string;
 };
 
-function strapiBase() {
-  return process.env.NEXT_PUBLIC_STRAPI_URL || process.env.STRAPI_INTERNAL_URL || "http://127.0.0.1:1337";
-}
-
 function toPublicImageUrl(url: string): string {
+  const base = getStrapiPublicBaseUrl();
   const trimmed = (url || "").trim();
   if (!trimmed) return trimmed;
-  if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) return trimmed;
-  if (trimmed.startsWith("/")) return `${strapiBase().replace(/\/$/, "")}${trimmed}`;
+  if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+    return trimmed.replace(/^https?:\/\/strapi:1337/i, base);
+  }
+  if (trimmed.startsWith("/")) return `${base}${trimmed}`;
   return trimmed;
 }
 
@@ -302,7 +302,7 @@ ${context}
       );
     }
 
-    const createRes = await fetchWithTimeout(`${strapiBase()}/api/knowledge-test-attempts`, {
+    const createRes = await fetchWithTimeout(`${getStrapiServerRequestBaseUrl()}/api/knowledge-test-attempts`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

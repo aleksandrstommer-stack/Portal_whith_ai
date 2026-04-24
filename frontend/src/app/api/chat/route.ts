@@ -7,6 +7,7 @@ import { getRagPool } from "@/lib/rag/pool";
 import { countRagChunks, ensureChatAnalyticsSchema, ensureRagSchema, toVectorParam } from "@/lib/rag/schema";
 import { importGoogleDocToVector } from "@/lib/rag/import-google-doc";
 import { syncKnowledgeFromStrapi } from "@/lib/rag/sync";
+import { getStrapiPublicBaseUrl } from "@/lib/strapi-urls";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -66,6 +67,12 @@ const CHAT_SYSTEM_PROMPT = `Ты — корпоративный AI-ассист�
 - дружелюбный
 - деловой
 - как опытный сотрудник компании
+10. НЕ СМЕШИВАЙ ТЕМЫ
+- Используй только фрагменты, которые относятся к вопросу
+- Не вставляй «Контакты / отдел» и названия чужих документов, если в релевантных фрагментах их нет
+- Если в контексте есть лишние фрагменты по другой теме — игнорируй их
+11. ЯЗЫК ОТВЕТА
+- Только русский: не вставляй английские слова (ensure, persist, also и т.п.)
 
 === ФОРМАТ ВЫВОДА ===
 Всегда старайся:
@@ -82,15 +89,42 @@ type ChatBody = {
 
 type RagRow = { content: string; metadata: unknown; dist: number };
 
-function strapiBase() {
-  return process.env.NEXT_PUBLIC_STRAPI_URL || process.env.STRAPI_INTERNAL_URL || "http://127.0.0.1:1337";
+function maxCosineDistanceForContext(): number {
+  const raw = process.env.RAG_MAX_COSINE_DISTANCE?.trim();
+  if (raw) {
+    const n = Number.parseFloat(raw);
+    if (Number.isFinite(n) && n > 0 && n < 2) return n;
+  }
+  return 0.58;
+}
+
+/**
+ * Косинусная дистанция (pgvector <=>): чем меньше, тем ближе. Отсекаем слабые попаданий.
+ */
+function takeRelevantRows(rows: RagRow[]): { rows: RagRow[]; lowConfidence: boolean } {
+  if (rows.length === 0) return { rows: [], lowConfidence: true };
+  const best = Math.min(...rows.map((r) => r.dist));
+  const cap = maxCosineDistanceForContext();
+  const loose = cap + 0.12;
+  const strict = rows.filter((r) => r.dist <= cap);
+  if (strict.length > 0) {
+    return { rows: strict, lowConfidence: best > cap * 0.9 };
+  }
+  const soft = rows.filter((r) => r.dist <= Math.min(loose, best + 0.18));
+  return {
+    rows: soft.length > 0 ? soft : rows.slice(0, 5),
+    lowConfidence: true,
+  };
 }
 
 function toPublicImageUrl(url: string): string {
+  const base = getStrapiPublicBaseUrl();
   const trimmed = (url || "").trim();
   if (!trimmed) return trimmed;
-  if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) return trimmed;
-  if (trimmed.startsWith("/")) return `${strapiBase().replace(/\/$/, "")}${trimmed}`;
+  if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+    return trimmed.replace(/^https?:\/\/strapi:1337/i, base);
+  }
+  if (trimmed.startsWith("/")) return `${base}${trimmed}`;
   return trimmed;
 }
 
@@ -176,31 +210,41 @@ export async function POST(request: Request) {
     const qEmb = await ollamaEmbed(question.slice(0, 8000));
     const vec = toVectorParam(qEmb);
 
-    const { rows } = await pool.query<RagRow>(
+    const { rows: rawRows } = await pool.query<RagRow>(
       `SELECT content, metadata, embedding <=> $1::vector AS dist
        FROM portal_rag_chunks
        ORDER BY embedding <=> $1::vector ASC
-       LIMIT 28`,
+       LIMIT 32`,
       [vec]
     );
 
-    const ranked = rankRowsByQuestion(rows, question).slice(0, 10);
+    const { rows: afterCutoff, lowConfidence } = takeRelevantRows(rawRows);
+    const ranked = rankRowsByQuestion(afterCutoff, question).slice(0, 10);
     const context = ranked.map((r) => r.content).join("\n---\n");
     const imageUrls = extractImageUrls(context);
     const runtimeInstruction = buildRuntimeInstruction(question);
-    let answer = await ollamaChat([
-      { role: "system", content: CHAT_SYSTEM_PROMPT },
-      {
-        role: "user",
-        content: `Контекст:
+    const confidenceBlock = lowConfidence
+      ? `Уточнение по релевантности: совпадение с базой условно (мало близких фрагментов).
+Если в контексте нет прямого ответа на вопрос — скажи, что в базе знаний нет подходящей инструкции, и задай 1 уточняющий вопрос. Не перечисляй контакты и заголовки из нерелевантных кусков.
+
+`
+      : "";
+    let answer = await ollamaChat(
+      [
+        { role: "system", content: CHAT_SYSTEM_PROMPT },
+        {
+          role: "user",
+          content: `${confidenceBlock}Контекст:
 ${context}
 
 Вопрос пользователя:
 ${question}
 
 ${runtimeInstruction}`,
-      },
-    ], { numPredict: 520, numCtx: 3072, temperature: 0.15, timeoutMs: 120000 });
+        },
+      ],
+      { numPredict: 520, numCtx: 3072, temperature: 0.15, timeoutMs: 120000 }
+    );
 
     if (imageUrls.length > 0 && !/!\[[^\]]*\]\((\/|https?:\/\/)/i.test(answer)) {
       answer = `${answer}\n\nИллюстрации из материалов:\n${imageUrls.slice(0, 3).map((u) => `![Иллюстрация](${u})`).join("\n")}`;
@@ -212,7 +256,7 @@ ${runtimeInstruction}`,
     await pool.query(
       `INSERT INTO portal_chat_feedback (interaction_id, question, answer, sources)
        VALUES ($1, $2, $3, $4::jsonb)`,
-      [interactionId, question, answer, JSON.stringify(rows.map((r) => r.metadata))]
+      [interactionId, question, answer, JSON.stringify(ranked.map((r) => r.metadata))]
     );
 
     return NextResponse.json({
