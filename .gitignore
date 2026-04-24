@@ -1,0 +1,16 @@
+.env
+.env.local
+.DS_Store
+node_modules
+.next
+out
+dist
+build
+.turbo
+coverage
+*.log
+cms/public/uploads/*
+!cms/public/uploads/.gitkeep
+frontend/.env.local
+frontend/public/rag-media/*
+!frontend/public/rag-media/.gitkeep

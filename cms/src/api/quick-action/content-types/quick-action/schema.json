@@ -1,0 +1,37 @@
+{
+  "kind": "collectionType",
+  "collectionName": "quick_actions",
+  "info": {
+    "singularName": "quick-action",
+    "pluralName": "quick-actions",
+    "displayName": "Быстрое действие",
+    "description": "Карточки быстрых действий на главной"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "label": {
+      "type": "string",
+      "required": true
+    },
+    "href": {
+      "type": "string",
+      "required": true
+    },
+    "hint": {
+      "type": "string"
+    },
+    "icon": {
+      "type": "enumeration",
+      "enum": ["mail", "calendar", "user", "file", "link", "phone", "sparkles"],
+      "default": "link",
+      "required": true
+    },
+    "order": {
+      "type": "integer",
+      "default": 0
+    }
+  }
+}

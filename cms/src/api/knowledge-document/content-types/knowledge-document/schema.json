@@ -1,0 +1,42 @@
+{
+  "kind": "collectionType",
+  "collectionName": "knowledge_documents",
+  "info": {
+    "singularName": "knowledge-document",
+    "pluralName": "knowledge-documents",
+    "displayName": "Knowledge document",
+    "description": "База знаний для будущего AI-ассистента (RAG)"
+  },
+  "options": {
+    "draftAndPublish": true
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "title": {
+      "type": "string",
+      "required": true
+    },
+    "slug": {
+      "type": "uid",
+      "targetField": "title",
+      "required": true
+    },
+    "abstract": {
+      "type": "text"
+    },
+    "body": {
+      "type": "richtext",
+      "required": true
+    },
+    "tags": {
+      "type": "string"
+    },
+    "source": {
+      "type": "string"
+    },
+    "embeddingMeta": {
+      "type": "json",
+      "private": false
+    }
+  }
+}

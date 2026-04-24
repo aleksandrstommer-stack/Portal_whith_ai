@@ -1,0 +1,33 @@
+{
+  "kind": "collectionType",
+  "collectionName": "announcements",
+  "info": {
+    "singularName": "announcement",
+    "pluralName": "announcements",
+    "displayName": "Объявление",
+    "description": "Короткие объявления для главной страницы"
+  },
+  "options": {
+    "draftAndPublish": true
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "title": {
+      "type": "string",
+      "required": true
+    },
+    "body": {
+      "type": "richtext",
+      "required": true
+    },
+    "priority": {
+      "type": "enumeration",
+      "enum": ["normal", "high"],
+      "default": "normal",
+      "required": true
+    },
+    "validUntil": {
+      "type": "datetime"
+    }
+  }
+}

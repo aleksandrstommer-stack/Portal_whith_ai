@@ -1,0 +1,110 @@
+services:
+  postgres:
+    # Для AI/RAG нужен pgvector. Если pull образа невозможен: POSTGRES_IMAGE=postgres:16-alpine (чат без векторов).
+    image: ${POSTGRES_IMAGE:-pgvector/pgvector:pg16}
+    pull_policy: if_not_present
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-strapi}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-strapi}
+      POSTGRES_DB: ${POSTGRES_DB:-strapi}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "${POSTGRES_PORT:-5433}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  strapi:
+    build:
+      context: ./cms
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      NODE_ENV: development
+      HOST: 0.0.0.0
+      PORT: 1337
+      APP_KEYS: ${APP_KEYS:-devKey1,devKey2,devKey3,devKey4}
+      API_TOKEN_SALT: ${API_TOKEN_SALT:-devApiTokenSalt}
+      ADMIN_JWT_SECRET: ${ADMIN_JWT_SECRET:-devAdminJwtSecret}
+      TRANSFER_TOKEN_SALT: ${TRANSFER_TOKEN_SALT:-devTransferTokenSalt}
+      JWT_SECRET: ${JWT_SECRET:-devJwtSecret}
+      DATABASE_CLIENT: postgres
+      DATABASE_HOST: postgres
+      DATABASE_PORT: 5432
+      DATABASE_NAME: ${POSTGRES_DB:-strapi}
+      DATABASE_USERNAME: ${POSTGRES_USER:-strapi}
+      DATABASE_PASSWORD: ${POSTGRES_PASSWORD:-strapi}
+      DATABASE_SSL: "false"
+      RAG_DATABASE_URL: ${RAG_DATABASE_URL:-postgresql://strapi:strapi@postgres:5432/strapi}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      OLLAMA_BASE_URLS: ${OLLAMA_BASE_URLS:-http://host.docker.internal:11434,http://ollama:11434}
+      OLLAMA_EMBEDDING_MODEL: ${OLLAMA_EMBEDDING_MODEL:-nomic-embed-text}
+      RAG_EMBEDDING_DIM: ${RAG_EMBEDDING_DIM:-768}
+    volumes:
+      - ./cms:/srv/app
+      - cms_node_modules:/srv/app/node_modules
+      - cms_uploads:/srv/app/public/uploads
+    ports:
+      - "${STRAPI_PORT:-1337}:1337"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Отдельный контейнер LLM (эмбеддинги + чат). Модели: sh scripts/rag-ollama-pull.sh
+  ollama:
+    image: ollama/ollama:latest
+    pull_policy: if_not_present
+    restart: unless-stopped
+    volumes:
+      - ollama_data:/root/.ollama
+    ports:
+      - "${OLLAMA_PORT:-11434}:11434"
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+    environment:
+      NODE_ENV: development
+      WATCHPACK_POLLING: "true"
+      NEXT_PUBLIC_STRAPI_URL: ${NEXT_PUBLIC_STRAPI_URL:-http://localhost:1337}
+      STRAPI_INTERNAL_URL: ${STRAPI_INTERNAL_URL:-http://strapi:1337}
+      RAG_DATABASE_URL: ${RAG_DATABASE_URL:-postgresql://strapi:strapi@postgres:5432/strapi}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      OLLAMA_BASE_URLS: ${OLLAMA_BASE_URLS:-http://host.docker.internal:11434,http://ollama:11434}
+      RAG_BOOTSTRAP_GOOGLE_DOC_ID: ${RAG_BOOTSTRAP_GOOGLE_DOC_ID:-}
+      RAG_IMPORT_SECRET: ${RAG_IMPORT_SECRET:-}
+      OLLAMA_EMBEDDING_MODEL: ${OLLAMA_EMBEDDING_MODEL:-nomic-embed-text}
+      OLLAMA_CHAT_MODEL: ${OLLAMA_CHAT_MODEL:-llama3.2}
+    volumes:
+      - ./frontend:/app
+      - frontend_node_modules:/app/node_modules
+      - frontend_next:/app/.next
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      strapi:
+        condition: service_started
+
+volumes:
+  postgres_data:
+  cms_node_modules:
+  cms_uploads:
+  frontend_node_modules:
+  frontend_next:
+  ollama_data:

@@ -1,0 +1,40 @@
+{
+  "kind": "singleType",
+  "collectionName": "virtual_reception",
+  "info": {
+    "singularName": "virtual-reception",
+    "pluralName": "virtual-receptions",
+    "displayName": "Виртуальная приёмная",
+    "description": "Контакты и режим работы приёмной"
+  },
+  "options": {
+    "draftAndPublish": true
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "title": {
+      "type": "string",
+      "required": true
+    },
+    "lead": {
+      "type": "text",
+      "required": true
+    },
+    "body": {
+      "type": "richtext",
+      "required": true
+    },
+    "hotline": {
+      "type": "string",
+      "required": true
+    },
+    "email": {
+      "type": "email",
+      "required": true
+    },
+    "schedule": {
+      "type": "richtext",
+      "required": true
+    }
+  }
+}

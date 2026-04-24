@@ -1,0 +1,35 @@
+{
+  "kind": "collectionType",
+  "collectionName": "useful_links",
+  "info": {
+    "singularName": "useful-link",
+    "pluralName": "useful-links",
+    "displayName": "Полезная ссылка",
+    "description": "Быстрые ссылки на внешние и внутренние сервисы"
+  },
+  "options": {
+    "draftAndPublish": true
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "title": {
+      "type": "string",
+      "required": true
+    },
+    "url": {
+      "type": "string",
+      "required": true
+    },
+    "description": {
+      "type": "text"
+    },
+    "groupName": {
+      "type": "string",
+      "default": "Общее"
+    },
+    "order": {
+      "type": "integer",
+      "default": 0
+    }
+  }
+}

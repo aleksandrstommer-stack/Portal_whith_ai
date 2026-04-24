@@ -1,0 +1,47 @@
+{
+  "kind": "collectionType",
+  "collectionName": "application_messages",
+  "info": {
+    "singularName": "application-message",
+    "pluralName": "application-messages",
+    "displayName": "Обращение",
+    "description": "Заявки и обращения с портала"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "fullName": {
+      "type": "string",
+      "required": true
+    },
+    "email": {
+      "type": "email",
+      "required": true
+    },
+    "phone": {
+      "type": "string"
+    },
+    "topic": {
+      "type": "enumeration",
+      "enum": ["hr", "it", "legal", "other"],
+      "default": "other",
+      "required": true
+    },
+    "message": {
+      "type": "text",
+      "required": true
+    },
+    "consent": {
+      "type": "boolean",
+      "default": false,
+      "required": true
+    },
+    "status": {
+      "type": "enumeration",
+      "enum": ["new", "in_progress", "closed"],
+      "default": "new"
+    }
+  }
+}

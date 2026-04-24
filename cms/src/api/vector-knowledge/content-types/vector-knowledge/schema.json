@@ -1,0 +1,61 @@
+{
+  "kind": "collectionType",
+  "collectionName": "vector_knowledges",
+  "info": {
+    "singularName": "vector-knowledge",
+    "pluralName": "vector-knowledges",
+    "displayName": "Векторная база знаний",
+    "description": "После публикации текст режется на чанки и попадает в pgvector для ИИ-чата"
+  },
+  "options": {
+    "draftAndPublish": true
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "title": {
+      "type": "string",
+      "required": true,
+      "displayName": "Заголовок"
+    },
+    "slug": {
+      "type": "uid",
+      "targetField": "title",
+      "required": true,
+      "displayName": "Идентификатор"
+    },
+    "body": {
+      "type": "richtext",
+      "required": false,
+      "displayName": "Содержание"
+    },
+    "note": {
+      "type": "text",
+      "displayName": "Комментарий"
+    },
+    "testKey": {
+      "type": "string",
+      "displayName": "Ключ теста"
+    },
+    "testTitle": {
+      "type": "string",
+      "displayName": "Название теста"
+    },
+    "testQuestionsCount": {
+      "type": "integer",
+      "min": 3,
+      "max": 20,
+      "default": 15,
+      "displayName": "Количество вопросов в тесте"
+    },
+    "googleDocUrl": {
+      "type": "string",
+      "displayName": "Ссылка Google Docs"
+    },
+    "docxFile": {
+      "type": "media",
+      "multiple": false,
+      "allowedTypes": ["files"],
+      "displayName": "DOCX-файл"
+    }
+  }
+}

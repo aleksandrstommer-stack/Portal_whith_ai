@@ -1,0 +1,51 @@
+{
+  "kind": "collectionType",
+  "collectionName": "employees",
+  "info": {
+    "singularName": "employee",
+    "pluralName": "employees",
+    "displayName": "Сотрудник",
+    "description": "Контакты и роли сотрудников"
+  },
+  "options": {
+    "draftAndPublish": true
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "fullName": {
+      "type": "string",
+      "required": true
+    },
+    "slug": {
+      "type": "uid",
+      "targetField": "fullName",
+      "required": true
+    },
+    "jobTitle": {
+      "type": "string",
+      "required": true
+    },
+    "email": {
+      "type": "email"
+    },
+    "phone": {
+      "type": "string"
+    },
+    "office": {
+      "type": "string"
+    },
+    "bio": {
+      "type": "richtext"
+    },
+    "sortOrder": {
+      "type": "integer",
+      "default": 0
+    },
+    "department": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "api::department.department",
+      "inversedBy": "employees"
+    }
+  }
+}

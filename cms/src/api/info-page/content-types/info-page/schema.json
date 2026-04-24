@@ -1,0 +1,54 @@
+{
+  "kind": "collectionType",
+  "collectionName": "info_pages",
+  "info": {
+    "singularName": "info-page",
+    "pluralName": "info-pages",
+    "displayName": "Информационная страница",
+    "description": "Официальные документы и регламенты"
+  },
+  "options": {
+    "draftAndPublish": true
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "title": {
+      "type": "string",
+      "required": true
+    },
+    "slug": {
+      "type": "uid",
+      "targetField": "title",
+      "required": true
+    },
+    "summary": {
+      "type": "text"
+    },
+    "body": {
+      "type": "richtext",
+      "required": true
+    },
+    "section": {
+      "type": "enumeration",
+      "enum": ["official", "personnel", "compliance"],
+      "default": "official",
+      "required": true
+    },
+    "navOrder": {
+      "type": "integer",
+      "default": 0
+    },
+    "parent": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "api::info-page.info-page",
+      "inversedBy": "children"
+    },
+    "children": {
+      "type": "relation",
+      "relation": "oneToMany",
+      "target": "api::info-page.info-page",
+      "mappedBy": "parent"
+    }
+  }
+}

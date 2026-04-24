@@ -1,0 +1,55 @@
+{
+  "kind": "collectionType",
+  "collectionName": "knowledge_test_attempts",
+  "info": {
+    "singularName": "knowledge-test-attempt",
+    "pluralName": "knowledge-test-attempts",
+    "displayName": "Прохождения тестов",
+    "description": "История тестирования сотрудников по базе знаний"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "fullName": {
+      "type": "string",
+      "required": true
+    },
+    "testKey": {
+      "type": "string",
+      "required": true
+    },
+    "testTitle": {
+      "type": "string"
+    },
+    "status": {
+      "type": "enumeration",
+      "enum": ["in_progress", "completed"],
+      "default": "in_progress",
+      "required": true
+    },
+    "questions": {
+      "type": "json",
+      "required": true
+    },
+    "answers": {
+      "type": "json"
+    },
+    "totalQuestions": {
+      "type": "integer",
+      "required": true
+    },
+    "correctAnswers": {
+      "type": "integer",
+      "default": 0
+    },
+    "startedAt": {
+      "type": "datetime",
+      "required": true
+    },
+    "finishedAt": {
+      "type": "datetime"
+    }
+  }
+}
