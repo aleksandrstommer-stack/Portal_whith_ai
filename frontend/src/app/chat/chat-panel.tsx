@@ -40,6 +40,15 @@ type TestSession = {
 
 type ContentPart = { type: "text"; value: string } | { type: "img"; alt: string; src: string };
 
+/** Стабильный ID в браузере: не все окружения дают globalThis.crypto.randomUUID (старые Safari, нестандартные WebView, HTTP). */
+function newMessageId(): string {
+  const c = typeof globalThis !== "undefined" ? globalThis.crypto : undefined;
+  if (c && typeof c.randomUUID === "function") {
+    return c.randomUUID();
+  }
+  return `m-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+}
+
 function isSafeAssistantImageSrc(src: string): boolean {
   if (src.startsWith("/") && !src.startsWith("//")) {
     return true;
@@ -231,7 +240,7 @@ export function ChatPanel() {
 
     const text = draft.trim();
     const userMessage: Message = {
-      id: crypto.randomUUID(),
+      id: newMessageId(),
       role: "user",
       content: text,
     };
@@ -252,7 +261,7 @@ export function ChatPanel() {
         throw new Error(payload.error || `Ошибка сервера: ${res.status}`);
       }
       const assistantMessage: Message = {
-        id: crypto.randomUUID(),
+        id: newMessageId(),
         role: "assistant",
         content: payload.answer || "Пустой ответ модели.",
         sources: payload.sources ?? [],

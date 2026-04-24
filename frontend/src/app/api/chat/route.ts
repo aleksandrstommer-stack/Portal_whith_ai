@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import { NextResponse } from "next/server";
 
 import { ollamaChat, ollamaEmbed } from "@/lib/rag/ollama";
@@ -206,7 +208,7 @@ ${runtimeInstruction}`,
     answer = normalizeMarkdownImageUrls(answer);
     answer = answer.replace(/\n\s*Иллюстрации из материалов:\s*$/i, "");
 
-    const interactionId = crypto.randomUUID();
+    const interactionId = randomUUID();
     await pool.query(
       `INSERT INTO portal_chat_feedback (interaction_id, question, answer, sources)
        VALUES ($1, $2, $3, $4::jsonb)`,
