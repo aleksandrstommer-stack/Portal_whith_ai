@@ -88,8 +88,18 @@ export async function ollamaEmbed(text: string): Promise<number[]> {
   return json.embedding;
 }
 
+function envInt(name: string, fallback: number, min: number, max: number): number {
+  const raw = process.env[name]?.trim();
+  if (!raw) return fallback;
+  const n = Number.parseInt(raw, 10);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, n));
+}
+
 export async function ollamaChat(messages: { role: string; content: string }[], options?: OllamaChatOptions): Promise<string> {
   const model = process.env.OLLAMA_CHAT_MODEL || "llama3.2";
+  const defaultCtx = envInt("OLLAMA_CHAT_NUM_CTX", 2200, 1024, 8192);
+  const defaultPred = envInt("OLLAMA_CHAT_NUM_PREDICT", 320, 120, 2048);
   const { json, base } = await withOllamaFallback<{ message?: { content?: string } }>("/api/chat", () => ({
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -98,8 +108,8 @@ export async function ollamaChat(messages: { role: string; content: string }[], 
       messages,
       stream: false,
       options: {
-        num_predict: options?.numPredict ?? 220,
-        num_ctx: options?.numCtx ?? 2048,
+        num_predict: options?.numPredict ?? defaultPred,
+        num_ctx: options?.numCtx ?? defaultCtx,
         temperature: options?.temperature ?? 0.2,
       },
       keep_alive: "10m",

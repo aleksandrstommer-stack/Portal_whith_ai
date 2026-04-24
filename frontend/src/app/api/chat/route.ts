@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 
+import type { Pool } from "pg";
 import { NextResponse } from "next/server";
 
 import { ollamaChat, ollamaEmbed } from "@/lib/rag/ollama";
@@ -7,87 +8,39 @@ import { getRagPool } from "@/lib/rag/pool";
 import { countRagChunks, ensureChatAnalyticsSchema, ensureRagSchema, toVectorParam } from "@/lib/rag/schema";
 import { importGoogleDocToVector } from "@/lib/rag/import-google-doc";
 import { syncKnowledgeFromStrapi } from "@/lib/rag/sync";
+import { collapseConsecutiveDuplicateBlocks, dedupeMarkdownImageLines } from "@/lib/rag/answer-cleanup";
 import { getStrapiPublicBaseUrl } from "@/lib/strapi-urls";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
 
 const CHAT_SYSTEM_PROMPT = `Ты — корпоративный AI-ассистент компании.
-Твоя роль:
-- инженер технической поддержки
-- HR-помощник
-- навигатор по внутренним процессам компании
-Ты работаешь на основе базы знаний (документы, инструкции и материалы базы знаний компании).
-Тебе передаётся контекст из векторной базы знаний.
+Ты работаешь только с переданным контекстом (фрагменты из векторной базы: документы, инструкции, материалы).
 
-=== ОСНОВНЫЕ ПРАВИЛА ===
-1. ОТВЕЧАЙ ТОЛЬКО НА ОСНОВЕ КОНТЕКСТА
-- Используй только переданный контекст
-- Если информации недостаточно — честно скажи:
-  "В базе знаний нет точной информации по этому вопросу"
-2. НЕ ПРИДУМЫВАЙ
-- Не додумывай процессы, контакты или правила
-- Не генерируй фейковые инструкции
-3. ДАВАЙ ПРАКТИЧЕСКИЕ ОТВЕТЫ
-Всегда стремись к формату:
-- что сделать
-- куда идти
-- к кому обратиться
-- какие документы нужны
-4. СТРУКТУРИРУЙ ОТВЕТ
-Используй формат:
-Короткий ответ:
-<1-2 предложения>
-Подробно:
-- шаг 1
-- шаг 2
-- шаг 3
-Если нужно:
-- Контакты / отдел
-- Ссылки / документы (если есть в контексте)
-5. ДЛЯ HR-ВОПРОСОВ
-Отвечай:
-- где взять справку
-- как подать заявку
-- в какой отдел идти
-- какие документы нужны
-6. ДЛЯ ТЕХНИЧЕСКИХ ВОПРОСОВ
-Отвечай:
-- что проверить
-- возможные причины
-- куда писать (IT, поддержка)
-- какие шаги выполнить
-7. ЕСЛИ ВОПРОС НЕПОНИМАТЕН
-Задай уточняющий вопрос вместо ответа
-8. ЯЗЫК
-- Отвечай на русском
-- Пиши просто и понятно
-- Без канцелярщины
-9. ТОН
-- дружелюбный
-- деловой
-- как опытный сотрудник компании
-10. НЕ СМЕШИВАЙ ТЕМЫ
-- Используй только фрагменты, которые относятся к вопросу
-- Не вставляй «Контакты / отдел» и названия чужих документов, если в релевантных фрагментах их нет
-- Если в контексте есть лишние фрагменты по другой теме — игнорируй их
-11. ЯЗЫК ОТВЕТА
-- Только русский: не вставляй английские слова (ensure, persist, also и т.п.)
+=== ГЛАВНОЕ ===
+1) Сначала найди в контексте факты, шаги, названия из материалов, которые относятся к вопросу.
+2) Сформируй ответ списком шагов или пунктов из этих фактов. Не сокращай ответ до «заглушек», если в контексте есть конкретика.
+3) Если в контексте нет прямой информации по вопросу, напиши одной-двумя фразами по-русски, что в базе знаний нет подходящей инструкции, и чего не хватает. Не придумывай сценарии, кнопки и модули.
+4) Не ссылайся на «системного администратора» и IT, если в релевантных фрагментах это явно не указано.
+5) Игнорируй в контексте фрагменты на другие темы (например HR, если вопрос про кассу/1С), если они не помогают на вопрос.
+6) Язык ответа — только русский. Запрещено использовать английские слова, латиницу, кроме обозначений из самого контекста (1С, ККМ, наименования из документа).
+7) Не используй слова: clarification, ensure, also, please, summary и им подобные.
+8) Не дублируй один и тот же ответ, один и тот же абзац, один и тот же нумерованный список и один и тот же шаг — напиши один раз.
+9) Не вставляй в ответ длинные перечни картинок: достаточно ссылки из контекста по смыслу, без повторов.
 
-=== ФОРМАТ ВЫВОДА ===
-Всегда старайся:
-- избегать длинных сплошных текстов
-- использовать списки
-- быть конкретным
+=== ОФОРМЛЕНИЕ (без обязательных заголовков «короткий/подробно») ===
+- Нумерованные или маркированные шаги
+- Краткое вступление 1–2 предложения только если оно несёт смысл
+- Без пустой воды
 
 === ПРИОРИТЕТ ===
-Точность > полнота > красота`;
+Точность и опора на фрагменты > длина ответа`;
 
 type ChatBody = {
   question?: string;
 };
 
-type RagRow = { content: string; metadata: unknown; dist: number };
+type RagRow = { id: number; content: string; metadata: unknown; dist: number };
 
 function maxCosineDistanceForContext(): number {
   const raw = process.env.RAG_MAX_COSINE_DISTANCE?.trim();
@@ -139,8 +92,50 @@ function normalizeMarkdownImageUrls(text: string): string {
   });
 }
 
+/** Слова из вопроса для гибридного ILIKE: названия вроде «тест драйв» плохо ловятся одним вектором. */
+function ilikeTermsFromQuestion(q: string): string[] {
+  const lower = q.toLowerCase();
+  const words = (lower.match(/[a-zа-яё0-9]+/gi) || [])
+    .map((w) => w.trim())
+    .filter((w) => w.length >= 3);
+  if (lower.includes("1с") || lower.includes("1c") || /1[сc]\b/i.test(q)) {
+    words.push("1с");
+  }
+  const uniq = [...new Set(words)].sort((a, b) => b.length - a.length);
+  return uniq.slice(0, 5);
+}
+
+async function fetchKeywordRows(pool: Pool, terms: string[]): Promise<RagRow[]> {
+  if (terms.length === 0) return [];
+  const or = terms.map((_, i) => `content ILIKE $${i + 1}`).join(" OR ");
+  const args = terms.map((t) => `%${t}%`);
+  const { rows } = await pool.query<RagRow>(
+    `SELECT id, content, metadata, 0.01::float AS dist
+     FROM portal_rag_chunks
+     WHERE ${or}
+     LIMIT 14`,
+    args
+  );
+  return rows;
+}
+
+function mergeByVectorThenKeyword(vec: RagRow[], kw: RagRow[]): RagRow[] {
+  const byId = new Map<number, RagRow>();
+  for (const r of kw) {
+    byId.set(r.id, r);
+  }
+  for (const r of vec) {
+    if (!byId.has(r.id)) {
+      byId.set(r.id, r);
+    }
+  }
+  return Array.from(byId.values());
+}
+
 function tokenizeForRank(input: string): string[] {
-  return (input.toLowerCase().match(/[a-zа-я0-9_-]+/gi) || []).filter((t) => t.length >= 3);
+  return (input.toLowerCase().match(/[a-zа-я0-9_-]+/gi) || []).filter(
+    (t) => t.length >= 3 || t === "1с" || t === "1c"
+  );
 }
 
 function rankRowsByQuestion(rows: RagRow[], question: string): RagRow[] {
@@ -161,12 +156,7 @@ function buildRuntimeInstruction(question: string): string {
   const isCashier1c =
     lower.includes("1с") || lower.includes("касс") || lower.includes("z-отчет") || lower.includes("z отчет") || lower.includes("закрыти");
   if (!isCashier1c) return "";
-  return `Дополнительные правила для этого вопроса:
-- Это операционный вопрос по 1С/кассе.
-- Не выдумывай названия объектов, кнопок и обработок, если их нет в контексте.
-- Не предлагай "обратиться к системному администратору", если это не указано в контексте явно.
-- Дай только те шаги, которые подтверждаются фрагментами.
-- Если в контексте не хватает данных для точного сценария, сначала задай 1 уточняющий вопрос.`;
+  return `Операционный вопрос по 1С/кассе. Перескажи только то, что есть в контексте: формы, кнопки, типовые сценарии. Если в фрагментах нет настройки ККМ/драйвера/версии ПО, которую спрашивают, напиши, что в материалах нет шагов для этого варианта, и предложи одну формулировку уточнения — только по-русски, без «администраторов» из воздуха.`;
 }
 
 export async function POST(request: Request) {
@@ -210,22 +200,25 @@ export async function POST(request: Request) {
     const qEmb = await ollamaEmbed(question.slice(0, 8000));
     const vec = toVectorParam(qEmb);
 
-    const { rows: rawRows } = await pool.query<RagRow>(
-      `SELECT content, metadata, embedding <=> $1::vector AS dist
+    const { rows: vecRows } = await pool.query<RagRow>(
+      `SELECT id, content, metadata, embedding <=> $1::vector AS dist
        FROM portal_rag_chunks
        ORDER BY embedding <=> $1::vector ASC
        LIMIT 32`,
       [vec]
     );
 
-    const { rows: afterCutoff, lowConfidence } = takeRelevantRows(rawRows);
+    const kwRows = await fetchKeywordRows(pool, ilikeTermsFromQuestion(question));
+    const merged = mergeByVectorThenKeyword(vecRows, kwRows);
+    merged.sort((a, b) => a.dist - b.dist);
+
+    const { rows: afterCutoff, lowConfidence } = takeRelevantRows(merged);
     const ranked = rankRowsByQuestion(afterCutoff, question).slice(0, 10);
     const context = ranked.map((r) => r.content).join("\n---\n");
     const imageUrls = extractImageUrls(context);
     const runtimeInstruction = buildRuntimeInstruction(question);
     const confidenceBlock = lowConfidence
-      ? `Уточнение по релевантности: совпадение с базой условно (мало близких фрагментов).
-Если в контексте нет прямого ответа на вопрос — скажи, что в базе знаний нет подходящей инструкции, и задай 1 уточняющий вопрос. Не перечисляй контакты и заголовки из нерелевантных кусков.
+      ? `Внимание: релевантные фрагменты в базе найдены с трудом. Не обобщай. Если по смыслу вопроса в контексте нет шагов — скажи честно по-русски, без английских слов, задай максимум одно уточнение, без выдуманных контактов.
 
 `
       : "";
@@ -243,14 +236,26 @@ ${question}
 ${runtimeInstruction}`,
         },
       ],
-      { numPredict: 520, numCtx: 3072, temperature: 0.15, timeoutMs: 120000 }
+      { temperature: 0.12, timeoutMs: 120000 }
     );
 
-    if (imageUrls.length > 0 && !/!\[[^\]]*\]\((\/|https?:\/\/)/i.test(answer)) {
-      answer = `${answer}\n\nИллюстрации из материалов:\n${imageUrls.slice(0, 3).map((u) => `![Иллюстрация](${u})`).join("\n")}`;
+    answer = collapseConsecutiveDuplicateBlocks(answer);
+
+    const hasMarkdownImage = /!\[[^\]]*\]\([^)]+\)/.test(answer);
+    if (imageUrls.length > 0 && !hasMarkdownImage) {
+      const extra = imageUrls
+        .slice(0, 3)
+        .map((u) => `![Иллюстрация](${u})`)
+        .join("\n");
+      answer = `${answer}\n\nИллюстрации из материалов:\n${extra}`;
     }
     answer = normalizeMarkdownImageUrls(answer);
+    answer = dedupeMarkdownImageLines(answer);
     answer = answer.replace(/\n\s*Иллюстрации из материалов:\s*$/i, "");
+    answer = collapseConsecutiveDuplicateBlocks(answer);
+
+    const uniqueForPayload = Array.from(new Set(imageUrls));
+    const imageUrlsForClient = uniqueForPayload.filter((u) => u && !answer.includes(u)).slice(0, 6);
 
     const interactionId = randomUUID();
     await pool.query(
@@ -262,7 +267,7 @@ ${runtimeInstruction}`,
     return NextResponse.json({
       interactionId,
       answer,
-      imageUrls: imageUrls.slice(0, 6),
+      imageUrls: imageUrlsForClient,
       sources: ranked.map((r) => r.metadata),
     });
   } catch (error) {
