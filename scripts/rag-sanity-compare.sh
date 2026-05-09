@@ -10,30 +10,47 @@
 
 set -euo pipefail
 
+# Корень репозитория (папка с docker-compose.yml) — заходить в неё, не в /Users/... с другой машины
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
 RAG_URL="${RAG_DATABASE_URL:-postgresql://strapi:strapi@127.0.0.1:5433/strapi}"
 CHAT_URL="${RAG_SANITY_CHAT_URL:-http://127.0.0.1:3000/api/chat}"
 OLLAMA_URL="${OLLAMA_BASE_URL:-http://127.0.0.1:11434}"
 QUESTION="${1:-Санити-чек RAG: сравниваю окружения}"
+
+# psql с хоста к порту, либо без psql — через docker compose exec
+psql_rag() {
+  if command -v psql >/dev/null 2>&1; then
+    psql "$RAG_URL" "$@"
+  elif [[ -f "$REPO_ROOT/docker-compose.yml" ]] && command -v docker >/dev/null 2>&1; then
+    (cd "$REPO_ROOT" && docker compose exec -T postgres psql -U strapi -d strapi "$@")
+  else
+    return 1
+  fi
+}
+
+echo "========== 0) Репозиторий (сюда смотрят docker compose и cd) =========="
+echo "$REPO_ROOT"
 
 echo "========== 1) Подключение к Postgres (строка без пароля) =========="
 echo "$RAG_URL" | sed -E 's#(postgresql://[^:]*:)[^@]*@#\1***@#'
 
 echo ""
 echo "========== 2) Сколько записей в portal_rag_chunks =========="
-if command -v psql >/dev/null 2>&1; then
-  psql "$RAG_URL" -tAc "SELECT COUNT(*) FROM portal_rag_chunks;" | xargs echo "count:"
+set +e
+CNT="$(psql_rag -tAc "SELECT COUNT(*) FROM portal_rag_chunks" 2>/dev/null)"
+set -e
+if [[ -n "${CNT// /}" ]]; then
+  echo "count: ${CNT// /}"
 else
-  echo "psql не найден. Установите postgresql client или выполните вручную в контейнере:"
-  echo "  docker compose exec -T postgres psql -U strapi -d strapi -c \"SELECT COUNT(*) FROM portal_rag_chunks;\""
+  echo "Не удалось выполнить запрос. Убедитесь, что из $REPO_ROOT команда: docker compose ps postgres, или установите psql."
 fi
 
 echo ""
 echo "========== 3) Три последних чанка: id, title из metadata, сниппет =========="
-if command -v psql >/dev/null 2>&1; then
-  psql "$RAG_URL" -c "SELECT id, COALESCE(metadata->>'title','') AS title, left(content, 100) AS snippet FROM portal_rag_chunks ORDER BY id DESC LIMIT 3;" 2>/dev/null || true
-else
-  echo "(пропущено, нет psql)"
-fi
+set +e
+psql_rag -c "SELECT id, COALESCE(metadata->>'title','') AS title, left(content, 100) AS snippet FROM portal_rag_chunks ORDER BY id DESC LIMIT 3;" 2>/dev/null || echo "(запрос не выполнен: запустите скрипт из папки репо, docker compose up -d)"
+set -e
 
 echo ""
 echo "========== 4) Ollama: какие модели (должны совпадать embed/chat с .env) =========="
@@ -57,5 +74,6 @@ curl -sS --connect-timeout 10 -X POST "$CHAT_URL" \
   -d "$(json_body)" | head -c 900
 echo
 echo ""
-echo "Готово. Сравните: COUNT на Mac и на Ubuntu, сниппеты и длину/смысл ответа /api/chat."
-echo "Если count=0 на сервере — RAG пуст: те же чанки нужно снова загрузить/проиндексировать (не «слова в фильтрах»)."
+echo "Готово. Сравните: COUNT, блок 3) и длину/смысл ответа /api/chat на Mac и Ubuntu."
+echo "Если count сильно отличается — разные данные в Postgres (не тот volume / не тот RAG_DATABASE_URL в контейнере frontend)."
+echo "Если в ответе есть materials, entails, «в контексте» про HR — на сервере, скорее всего, старая сборка API: git pull, затем docker compose build --no-cache frontend && docker compose up -d"

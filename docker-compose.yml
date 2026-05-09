@@ -39,7 +39,8 @@ services:
       DATABASE_USERNAME: ${POSTGRES_USER:-strapi}
       DATABASE_PASSWORD: ${POSTGRES_PASSWORD:-strapi}
       DATABASE_SSL: "false"
-      RAG_DATABASE_URL: ${RAG_DATABASE_URL:-postgresql://strapi:strapi@postgres:5432/strapi}
+      # Сборка URL из POSTGRES_*, хост postgres — не из RAG_DATABASE_URL .env (часто ошибочно 127.0.0.1:5433)
+      RAG_DATABASE_URL: "postgresql://${POSTGRES_USER:-strapi}:${POSTGRES_PASSWORD:-strapi}@postgres:5432/${POSTGRES_DB:-strapi}"
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       OLLAMA_BASE_URLS: ${OLLAMA_BASE_URLS:-http://host.docker.internal:11434,http://ollama:11434}
       OLLAMA_EMBEDDING_MODEL: ${OLLAMA_EMBEDDING_MODEL:-nomic-embed-text}
@@ -82,7 +83,7 @@ services:
       WATCHPACK_POLLING: "true"
       NEXT_PUBLIC_STRAPI_URL: ${NEXT_PUBLIC_STRAPI_URL:-http://localhost:1337}
       STRAPI_INTERNAL_URL: ${STRAPI_INTERNAL_URL:-http://strapi:1337}
-      RAG_DATABASE_URL: ${RAG_DATABASE_URL:-postgresql://strapi:strapi@postgres:5432/strapi}
+      RAG_DATABASE_URL: "postgresql://${POSTGRES_USER:-strapi}:${POSTGRES_PASSWORD:-strapi}@postgres:5432/${POSTGRES_DB:-strapi}"
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       OLLAMA_BASE_URLS: ${OLLAMA_BASE_URLS:-http://host.docker.internal:11434,http://ollama:11434}
       RAG_BOOTSTRAP_GOOGLE_DOC_ID: ${RAG_BOOTSTRAP_GOOGLE_DOC_ID:-}

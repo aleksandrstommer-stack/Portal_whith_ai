@@ -9,38 +9,47 @@ import { countRagChunks, ensureChatAnalyticsSchema, ensureRagSchema, toVectorPar
 import { importGoogleDocToVector } from "@/lib/rag/import-google-doc";
 import { syncKnowledgeFromStrapi } from "@/lib/rag/sync";
 import { collapseConsecutiveDuplicateBlocks, dedupeMarkdownImageLines } from "@/lib/rag/answer-cleanup";
+import {
+  type RagRow,
+  fetchProductPhraseRows,
+  filterOffTopicRows,
+  mergeRagByPriority,
+} from "@/lib/rag/rag-context-filter";
+import { diversifyChunksRoundRobin } from "@/lib/rag/diversify-sources";
 import { getStrapiPublicBaseUrl } from "@/lib/strapi-urls";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
 
 const CHAT_SYSTEM_PROMPT = `Ты — корпоративный AI-ассистент компании.
-Ты работаешь только с переданным контекстом (фрагменты из векторной базы: документы, инструкции, материалы).
+Ниже — фрагменты из базы знаний (они могут относиться к разным документам/файлам). Используй все релевантные фрагменты; не ограничивайся условным «первым» файлом и не домысливай там, где ответ есть в других фрагментах. Остальное полностью игнорируй (не перечисляй и не комментируй «что ещё было в фрагментах»).
 
 === ГЛАВНОЕ ===
-1) Сначала найди в контексте факты, шаги, названия из материалов, которые относятся к вопросу.
-2) Сформируй ответ списком шагов или пунктов из этих фактов. Не сокращай ответ до «заглушек», если в контексте есть конкретика.
-3) Если в контексте нет прямой информации по вопросу, напиши одной-двумя фразами по-русски, что в базе знаний нет подходящей инструкции, и чего не хватает. Не придумывай сценарии, кнопки и модули.
-4) Не ссылайся на «системного администратора» и IT, если в релевантных фрагментах это явно не указано.
-5) Игнорируй в контексте фрагменты на другие темы (например HR, если вопрос про кассу/1С), если они не помогают на вопрос.
-6) Язык ответа — только русский. Запрещено использовать английские слова, латиницу, кроме обозначений из самого контекста (1С, ККМ, наименования из документа).
-7) Не используй слова: clarification, ensure, also, please, summary и им подобные.
-8) Не дублируй один и тот же ответ, один и тот же абзац, один и тот же нумерованный список и один и тот же шаг — напиши один раз.
-9) Не вставляй в ответ длинные перечни картинок: достаточно ссылки из контекста по смыслу, без повторов.
-
-=== ОФОРМЛЕНИЕ (без обязательных заголовков «короткий/подробно») ===
-- Нумерованные или маркированные шаги
-- Краткое вступление 1–2 предложения только если оно несёт смысл
-- Без пустой воды
+1) Дай прямой ответ: нумерованные шаги / пункты из релевантных фрагментов, без раздувания.
+2) ЗАПРЕЩЕНО в ответе: «в контексте», «указано в контексте», «в materials», «по materials», «состав фрагментах», «процесс адаптации 30-60-90», «HR:», если вопрос про кассу/1С/драйв/ККМ и в релевантных к ответу фрагментах об этом нет. Не пересказывай чужие темы.
+3) ЗАПРЕЩЕНО: английские слова (materials, context, clarification, ensure, summary и т.д.). Только русский, кроме имён продуктов/ПО из самого фрагмента (1С, Тест Драйв, ККМ).
+4) Если по теме вопроса в релевантных фрагментах нет шагов — 2–3 фразы: «В базе знаний нет отдельной инструкции по …; можно уточнить …» — без ссылок на адаптацию и HR.
+5) Не ссылайся на «системного администратора» и IT из воздуха.
+6) Не дублируй одни и те же абзацы, списки и шаги. Не повторяй один и тот же шаг в списке дважды.
+7) Картинки: если в релевантных фрагментах есть ссылки-иллюстрации, можно использовать 1–3 по смыслу, не списком на десятки строк.
 
 === ПРИОРИТЕТ ===
-Точность и опора на фрагменты > длина ответа`;
+Прямой ответ по делу, без мета-обсуждения базы`;
 
 type ChatBody = {
   question?: string;
 };
 
-type RagRow = { id: number; content: string; metadata: unknown; dist: number };
+function contextChunkCount(): number {
+  const raw = process.env.RAG_CONTEXT_MAX_CHUNKS?.trim();
+  if (raw) {
+    const n = Number.parseInt(raw, 10);
+    if (Number.isFinite(n)) {
+      return Math.min(24, Math.max(6, n));
+    }
+  }
+  return 12;
+}
 
 function maxCosineDistanceForContext(): number {
   const raw = process.env.RAG_MAX_COSINE_DISTANCE?.trim();
@@ -119,19 +128,6 @@ async function fetchKeywordRows(pool: Pool, terms: string[]): Promise<RagRow[]> 
   return rows;
 }
 
-function mergeByVectorThenKeyword(vec: RagRow[], kw: RagRow[]): RagRow[] {
-  const byId = new Map<number, RagRow>();
-  for (const r of kw) {
-    byId.set(r.id, r);
-  }
-  for (const r of vec) {
-    if (!byId.has(r.id)) {
-      byId.set(r.id, r);
-    }
-  }
-  return Array.from(byId.values());
-}
-
 function tokenizeForRank(input: string): string[] {
   return (input.toLowerCase().match(/[a-zа-я0-9_-]+/gi) || []).filter(
     (t) => t.length >= 3 || t === "1с" || t === "1c"
@@ -156,7 +152,7 @@ function buildRuntimeInstruction(question: string): string {
   const isCashier1c =
     lower.includes("1с") || lower.includes("касс") || lower.includes("z-отчет") || lower.includes("z отчет") || lower.includes("закрыти");
   if (!isCashier1c) return "";
-  return `Операционный вопрос по 1С/кассе. Перескажи только то, что есть в контексте: формы, кнопки, типовые сценарии. Если в фрагментах нет настройки ККМ/драйвера/версии ПО, которую спрашивают, напиши, что в материалах нет шагов для этого варианта, и предложи одну формулировку уточнения — только по-русски, без «администраторов» из воздуха.`;
+  return `Вопрос по 1С/кассе. Опиши шаги из релевантных фрагментов. Если в них нет настройки под запрос — кратко скажи, что в базе нет такой ветки инструкции, и один уточняющий вопрос — по-русски. Не ссылайся на HR и адаптацию, если в релевантных к ответу фрагментах об этом нет.`;
 }
 
 export async function POST(request: Request) {
@@ -204,24 +200,30 @@ export async function POST(request: Request) {
       `SELECT id, content, metadata, embedding <=> $1::vector AS dist
        FROM portal_rag_chunks
        ORDER BY embedding <=> $1::vector ASC
-       LIMIT 32`,
+       LIMIT 56`,
       [vec]
     );
 
+    const phraseRows = await fetchProductPhraseRows(pool, question);
     const kwRows = await fetchKeywordRows(pool, ilikeTermsFromQuestion(question));
-    const merged = mergeByVectorThenKeyword(vecRows, kwRows);
+    const merged = mergeRagByPriority(phraseRows, kwRows, vecRows);
     merged.sort((a, b) => a.dist - b.dist);
 
     const { rows: afterCutoff, lowConfidence } = takeRelevantRows(merged);
-    const ranked = rankRowsByQuestion(afterCutoff, question).slice(0, 10);
+    let ranked = rankRowsByQuestion(afterCutoff, question);
+    ranked = filterOffTopicRows(ranked, question);
+    ranked = ranked.slice(0, 48);
+    ranked = diversifyChunksRoundRobin(ranked, contextChunkCount());
+    const hasStrongRag = phraseRows.length + kwRows.length > 0;
     const context = ranked.map((r) => r.content).join("\n---\n");
     const imageUrls = extractImageUrls(context);
     const runtimeInstruction = buildRuntimeInstruction(question);
-    const confidenceBlock = lowConfidence
-      ? `Внимание: релевантные фрагменты в базе найдены с трудом. Не обобщай. Если по смыслу вопроса в контексте нет шагов — скажи честно по-русски, без английских слов, задай максимум одно уточнение, без выдуманных контактов.
+    const confidenceBlock =
+      !hasStrongRag && lowConfidence
+        ? `Совпадения с базой слабые. Ответь кратко по-русски: либо шаги из фрагментов, либо что инструкции в базе не найдено; без обсуждения состава «контекста», без латиницы.
 
 `
-      : "";
+        : "";
     let answer = await ollamaChat(
       [
         { role: "system", content: CHAT_SYSTEM_PROMPT },

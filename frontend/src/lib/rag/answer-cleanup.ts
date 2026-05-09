@@ -3,22 +3,30 @@
  */
 export function collapseConsecutiveDuplicateBlocks(text: string): string {
   if (!text) return text;
-  const parts = text.split(/\n{2,}/);
-  const out: string[] = [];
-  let prevNorm = "";
-  for (const part of parts) {
-    const n = part.trim().replace(/\s+/g, " ");
-    if (n.length < 10) {
+  let prev = text;
+  for (let i = 0; i < 4; i += 1) {
+    const parts = prev.split(/\n{2,}/);
+    const out: string[] = [];
+    let prevNorm = "";
+    for (const part of parts) {
+      const n = part.trim().replace(/\s+/g, " ");
+      if (n.length < 10) {
+        out.push(part);
+        continue;
+      }
+      if (n === prevNorm) {
+        continue;
+      }
+      prevNorm = n;
       out.push(part);
-      continue;
     }
-    if (n === prevNorm) {
-      continue;
+    const next = out.join("\n\n");
+    if (next === prev) {
+      return next;
     }
-    prevNorm = n;
-    out.push(part);
+    prev = next;
   }
-  return out.join("\n\n");
+  return prev;
 }
 
 /**
